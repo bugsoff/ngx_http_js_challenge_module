@@ -355,10 +355,10 @@ static int verify_response(ngx_str_t response, char *challenge) {
 
 
 static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
+
+/* 1. Check if module is Enabled */
+
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
-
-/* 1. Check if Enabled */
-
     ngx_flag_t is_enabled = conf->enabled;
 
     // If a variable name was passed instead of a flag
@@ -389,7 +389,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
         return NGX_DECLINED;
     }
 
-/* 2. Check no cookies */
+/* 2. Check no_cookie parameter */
 
     // Check if 'no_cookie' parameter is present in the query string
     ngx_uint_t no_cookie_present = 0;
@@ -427,29 +427,45 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
 /* 3. Get remote client IP */
 
-    // Check for X-REAL-IP header and fallback to connection IP if not present
-    ngx_str_t addr = r->connection->addr_text; // Default IP
-    ngx_list_part_t *part = &r->headers_in.headers.part;
-    ngx_table_elt_t *header = part->elts;
+    /*
+       Trust the X-REAL-IP/X-FORWARDED-FOR headers only if the request address is from a private network
+       (if set_real_ip_from is not set in the nginx configuration)
+    */
+    ngx_str_t addr = r->connection->addr_text;              // Default IP
+    char ip_str[40];
+    ngx_cpystrn((u_char *)ip_str, addr.data, addr.len + 1); // Convert ngx_str_t to NULL-terminated string for is_private_ip
+    // try to get a real IP from the headers
+    if (is_private_ip(ip_str)) {
+        ngx_list_part_t *part = &r->headers_in.headers.part;
+        ngx_table_elt_t *header = part->elts;
+        for (ngx_uint_t i = 0; i < part->nelts; i++) {
 
-    for (ngx_uint_t i = 0; i < part->nelts; i++) {
-        if ((ngx_strncasecmp(header[i].key.data, (u_char *)"X-REAL-IP", header[i].key.len) == 0 ||
-             ngx_strncasecmp(header[i].key.data, (u_char *)"X-FORWARDED-FOR", header[i].key.len) == 0) &&
-            header[i].value.len > 0 && header[i].value.len <= 39) {
-            // Convert ngx_str_t to NULL-terminated string for is_private_ip
-            char ip_str[40];
-            ngx_cpystrn((u_char *)ip_str, addr.data, addr.len + 1);
-            if (is_private_ip(ip_str)) {
-                addr = header[i].value;
+            if ((ngx_strncasecmp(header[i].key.data, (u_char *)"X-REAL-IP", header[i].key.len) == 0 ||
+                 ngx_strncasecmp(header[i].key.data, (u_char *)"X-FORWARDED-FOR", header[i].key.len) == 0) &&
+                header[i].value.len > 0 && header[i].value.len <= 39) {
+
+                ngx_str_t src_ip = header[i].value;     // set from X-Real-IP
+                // get first IP from X-FORWARDED-FOR (if present, it can contain several comma separated IPs)
+                if (ngx_strncasecmp(header[i].key.data, (u_char *)"X-FORWARDED-FOR", header[i].key.len) == 0) {
+                    u_char *comma = ngx_strlchr(src_ip.data, src_ip.data + src_ip.len, ',');
+                    size_t len = comma ? (size_t)(comma - src_ip.data) : src_ip.len;
+                    // cut trailing spaces
+                    while (len > 0 && src_ip.data[len - 1] == ' ') {
+                        len--;
+                    }
+                    src_ip.len = len;
+                }
                 break;
             }
-        }
-        if (i == part->nelts - 1 && part->next != NULL) {
-            part = part->next;
-            header = part->elts;
-            i = -1;
+
+            if (i == part->nelts - 1 && part->next != NULL) {
+                part = part->next;
+                header = part->elts;
+                i = -1;
+            }
         }
     }
+
 
 /* 4. Get User-Agent */
 
@@ -462,11 +478,10 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 /* 5. Get Challenge */
 
     unsigned long bucket = r->start_sec - (r->start_sec % conf->bucket_duration);
-
     char challenge[SHA1_STR_LEN];
     get_challenge_string(bucket, addr, user_agent, conf->secret, challenge);  // Updated to include User-Agent
 
-/* 6. Check Challenge response */
+/* 6. Serve Challenge / Check Challenge response (if received) */
 
     ngx_str_t response;
     ngx_str_t cookie_name = ngx_string("c_token");
