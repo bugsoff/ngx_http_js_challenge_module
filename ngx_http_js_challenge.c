@@ -36,11 +36,13 @@ typedef struct {
     char *html;
     ngx_str_t enabled_variable_name;
     ngx_flag_t challenge_served;
+    ngx_flag_t challenge_passed;
 } ngx_http_js_challenge_loc_conf_t;
 
 static ngx_int_t ngx_http_js_challenge(ngx_conf_t *cf);
 static char *ngx_http_js_challenge_set_flag_or_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 
@@ -105,6 +107,14 @@ static ngx_http_variable_t ngx_http_js_challenge_vars[] = {
                 NGX_HTTP_VAR_CHANGEABLE,
                 0
         },
+        {
+                ngx_string("js_challenge_passed"),
+                NULL,
+                ngx_http_js_challenge_passed_var,
+                0,
+                NGX_HTTP_VAR_CHANGEABLE,
+                0
+        },
         ngx_http_null_variable
 };
 
@@ -152,6 +162,7 @@ static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf) {
     conf->enabled = NGX_CONF_UNSET;
     conf->enabled_variable_name = (ngx_str_t) {0, NULL};
     conf->challenge_served = 0;
+    conf->challenge_passed = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -475,15 +486,36 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
 
+    conf->challenge_passed = 1;
+
     // Fallthrough next handler
     return NGX_DECLINED;
 }
 
+////////////////////////////////////////////////////////////////////////////////
 
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
 
     if (conf->challenge_served) {
+        v->len = 1;
+        v->data = (u_char *) "1";
+    } else {
+        v->len = 1;
+        v->data = (u_char *) "0";
+    }
+
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+
+    return NGX_OK;
+}
+
+static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
+    ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
+
+    if (conf->challenge_passed) {
         v->len = 1;
         v->data = (u_char *) "1";
     } else {
