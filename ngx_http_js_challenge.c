@@ -348,14 +348,11 @@ static int verify_response(ngx_str_t response, char *challenge) {
     unsigned char md[SHA1_MD_LEN];
     __sha1((unsigned char *) response.data, response.len, md);
 
-    unsigned int nibble1;
-    if (challenge[0] <= '9') {
-        nibble1 = challenge[0] - '0';
-    } else {
-        nibble1 = challenge[0] - 'A' + 10;
-    }
+    unsigned int nibble = (challenge[0] <= '9')
+        ? challenge[0] - '0'
+        : challenge[0] - 'A' + 10;
 
-    return md[nibble1] == 0xB0 && md[nibble1 + 1] == 0x0B && (md[0] == 0x0 || md[0] == 0x1) ? 0 : -1;
+    return md[nibble] == 0xB0 && md[nibble + 1] == 0x0B && (md[0] == 0x0 || md[0] == 0x1) ? 0 : -1;
 }
 
 
@@ -383,29 +380,22 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
         variable_value.data = var->data;
         variable_value.len = var->len;
 
-        if (ngx_strncmp(variable_value.data, "on", variable_value.len) == 0) {
-            is_enabled = 1;
-        } else {
-            is_enabled = 0;
-        }
+        is_enabled = (ngx_strncmp(variable_value.data, "on", variable_value.len) == 0) ||
+                     (ngx_strncmp(variable_value.data, "1", variable_value.len) == 0)
+                     ? 1 : 0;
     }
 
     if (!is_enabled) {
         return NGX_DECLINED;
     }
 
-/* 2. Check no_cookie parameter */
+/* 2. Check no_cookie parameter in the query string */
 
-    // Check if 'no_cookie' parameter is present in the query string
-    ngx_uint_t no_cookie_present = 0;
     ngx_str_t no_cookie_arg = ngx_string("no_cookie");
     ngx_str_t value;
-    if (ngx_http_arg(r, no_cookie_arg.data, no_cookie_arg.len, &value) == NGX_OK) {
-        no_cookie_present = 1;
-    }
 
     // Handle the no_cookie case by showing a static error message
-    if (no_cookie_present) {
+    if (ngx_http_arg(r, no_cookie_arg.data, no_cookie_arg.len, &value) == NGX_OK) {
         ngx_buf_t *b = ngx_create_temp_buf(r->pool, 1024);
         if (b == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -517,14 +507,8 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
 
-    if (conf->challenge_served) {
-        v->len = 1;
-        v->data = (u_char *) "1";
-    } else {
-        v->len = 1;
-        v->data = (u_char *) "0";
-    }
-
+    v->data = conf->challenge_served ? (u_char *) "1" : (u_char *) "0";
+    v->len = 1;
     v->valid = 1;
     v->no_cacheable = 0;
     v->not_found = 0;
@@ -535,14 +519,8 @@ static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_htt
 static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
 
-    if (conf->challenge_passed) {
-        v->len = 1;
-        v->data = (u_char *) "1";
-    } else {
-        v->len = 1;
-        v->data = (u_char *) "0";
-    }
-
+    v->data = conf->challenge_passed ? (u_char *) "1" : (u_char *) "0";
+    v->len = 1;
     v->valid = 1;
     v->no_cacheable = 0;
     v->not_found = 0;
