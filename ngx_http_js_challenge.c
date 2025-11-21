@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 
 #define DEFAULT_SECRET "changeme!"
+#define DEFAULT_SECRET_LEN (sizeof(DEFAULT_SECRET) - 1)
 #define SHA1_MD_LEN 20
 #define SHA1_STR_LEN 40
 
@@ -162,7 +163,7 @@ static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf) {
     conf->enabled = NGX_CONF_UNSET;
     conf->enabled_variable_name = (ngx_str_t) {0, NULL};
     conf->challenge_served = 0;
-    conf->challenge_passed = NGX_CONF_UNSET;
+    conf->challenge_passed = 0;
 
     return conf;
 }
@@ -172,16 +173,24 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
     ngx_http_js_challenge_loc_conf_t *prev = parent;
     ngx_http_js_challenge_loc_conf_t *conf = child;
 
-    ngx_conf_merge_uint_value(conf->bucket_duration, prev->bucket_duration, 3600)
-    ngx_conf_merge_value(conf->enabled, prev->enabled, 0)
+    // default enabled unset: will process this case later (if still unset and enabled_variable_name nas no value)
+    ngx_conf_merge_value(conf->enabled, prev->enabled, NGX_CONF_UNSET)
     ngx_conf_merge_str_value(conf->enabled_variable_name, prev->enabled_variable_name, NULL)
     ngx_conf_merge_str_value(conf->secret, prev->secret, DEFAULT_SECRET)
+    ngx_conf_merge_uint_value(conf->bucket_duration, prev->bucket_duration, 3600)
     ngx_conf_merge_str_value(conf->html_path, prev->html_path, NULL)
     ngx_conf_merge_str_value(conf->title, prev->title, DEFAULT_TITLE)
 
     // _enabled
     if (conf->enabled == NGX_CONF_UNSET && conf->enabled_variable_name.data == NULL) {
         conf->enabled = 0;
+    }
+
+    // _secret
+    if ((conf->enabled == 1 || conf->enabled_variable_name.data != NULL) &&
+        (conf->secret.len == DEFAULT_SECRET_LEN &&
+        ngx_strncmp(conf->secret.data, (u_char *)DEFAULT_SECRET, DEFAULT_SECRET_LEN) == 0)) {
+        ngx_log_error(NGX_LOG_WARN, cf->log, 0, "[js-challenge] Using default secret is insecure! Please set a unique 'js_challenge_secret' in your config.");
     }
 
     // _bucket_duration
@@ -257,20 +266,19 @@ ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_
     char buf[4096];
     unsigned char md[SHA1_MD_LEN];
     char *p = (char *) &bucket;
+    size_t offset = 0;
 
-    int offset = 0;
     memcpy(buf + offset, p, sizeof(bucket));                // Copy the bucket
+    offset += sizeof(bucket);
 
-    offset += sizeof(int32_t);
     memcpy(buf + offset, addr.data, addr.len);              // Copy the IP address
-
     offset += addr.len;
-    memcpy(buf + offset, secret.data, secret.len);          // Copy the secret
 
+    memcpy(buf + offset, secret.data, secret.len);          // Copy the secret
     offset += secret.len;
-    uint32_t max_len = 4096 - offset >= user_agent.len ? user_agent.len : 4096 - offset; // cut User-Agent if it too long
-    memcpy(buf + offset, user_agent.data, max_len);         // Copy the User-Agent
-    //offset += user_agent.len;
+
+    size_t max_len = sizeof(buf) - offset > user_agent.len ? user_agent.len : sizeof(buf) - offset; // cut User-Agent if it too long
+    memcpy(buf + offset, user_agent.data, max_len);         // Copy the User-Agent up to max_len
 
     __sha1((unsigned char *) buf, (size_t) (offset + secret.len), md);      // Calculate SHA1 hash of the concatenated data
     buf2hex(md, SHA1_MD_LEN, out);                                          // Convert the hash to a hexadecimal string
@@ -370,8 +378,6 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
         // if empty value => challenge off
         if (var == NULL || var->not_found) {
-            ngx_str_t *var_name = &conf->enabled_variable_name;
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "[js-challenge] variable %*s not found or empty", var_name->len, var_name->data);
             return NGX_DECLINED;
         }
 
@@ -475,18 +481,15 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
     ngx_str_t response;
     ngx_str_t cookie_name = ngx_string("c_token");
-    int ret = get_cookie(r, &cookie_name, &response);
 
     // no cookie received
-    if (ret != 0) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "[js-challenge] new c_token: %s ", challenge);
+    if (get_cookie(r, &cookie_name, &response) != 0) {
         conf->challenge_served = 1;
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
 
     // wrong challenge-response in cookies
     if (verify_response(response, challenge) != 0) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "[js-challenge] wrong/expired c_token (%s), update c_token: %s", response.data, challenge);
         conf->challenge_served = 1;
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
@@ -502,7 +505,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
 
-    v->data = conf->challenge_served ? (u_char *) "1" : (u_char *) "0";
+    v->data = (conf->challenge_served == 1) ? (u_char *) "1" : (u_char *) "0";
     v->len = 1;
     v->valid = 1;
     v->no_cacheable = 0;
@@ -514,7 +517,7 @@ static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_htt
 static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
 
-    v->data = conf->challenge_passed ? (u_char *) "1" : (u_char *) "0";
+    v->data = (conf->challenge_passed == 1) ? (u_char *) "1" : (u_char *) "0";
     v->len = 1;
     v->valid = 1;
     v->no_cacheable = 0;
