@@ -46,8 +46,8 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
 
 static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r);
 
-static void buf2hex(const unsigned char *buf, size_t buflen, char *hex_string)
-unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md);
+static void buf2hex(const unsigned char *buf, size_t buflen, char *hex_string);
+static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md);
 static int is_private_ip(const char *ip);
 static int get_cookie(ngx_http_request_t *r, ngx_str_t *name, ngx_str_t *value);
 
