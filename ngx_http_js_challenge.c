@@ -262,12 +262,17 @@ ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_
 
     int offset = 0;
     memcpy(buf + offset, p, sizeof(bucket));                // Copy the bucket
+
     offset += sizeof(int32_t);
     memcpy(buf + offset, addr.data, addr.len);              // Copy the IP address
+
     offset += addr.len;
-    memcpy(buf + offset, user_agent.data, user_agent.len);  // Copy the User-Agent
-    offset += user_agent.len;
     memcpy(buf + offset, secret.data, secret.len);          // Copy the secret
+
+    offset += secret.len;
+    uint32_t max_len = 4096 - offset >= user_agent.len ? user_agent.len : 4096 - offset; // cut User-Agent if it too long
+    memcpy(buf + offset, user_agent.data, max_len);         // Copy the User-Agent
+    //offset += user_agent.len;
 
     __sha1((unsigned char *) buf, (size_t) (offset + secret.len), md);      // Calculate SHA1 hash of the concatenated data
     buf2hex(md, SHA1_MD_LEN, out);                                          // Convert the hash to a hexadecimal string
