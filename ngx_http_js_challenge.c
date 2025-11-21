@@ -179,17 +179,18 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
     ngx_conf_merge_str_value(conf->html_path, prev->html_path, NULL)
     ngx_conf_merge_str_value(conf->title, prev->title, DEFAULT_TITLE)
 
-    if (conf->enabled != 1 && conf->enabled_variable_name.data != NULL && conf->enabled_variable_name.len > 0) {
-        conf->enabled = NGX_CONF_UNSET;
-    } else if (conf->enabled == NGX_CONF_UNSET) {
+    // _enabled
+    if (conf->enabled == NGX_CONF_UNSET && conf->enabled_variable_name.data == NULL) {
         conf->enabled = 0;
     }
 
+    // _bucket_duration
     if (conf->bucket_duration < 1) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "[js-challenge] bucket_duration must be equal or more than 1");
         return NGX_CONF_ERROR;
     }
 
+    // _html_path
     if (conf->html_path.data == NULL) {
         conf->html = NULL;
     } else if (conf->enabled || conf->enabled_variable_name.len > 0) {
@@ -232,17 +233,14 @@ static char *ngx_http_js_challenge_set_flag_or_variable(ngx_conf_t *cf, ngx_comm
         js_conf->enabled = 1;
     } else if (ngx_strcmp(value[1].data, "off") == 0) {
         js_conf->enabled = 0;
+    } else if (value[1].data[0] == '$') {   // If the value starts with '$', treat it as a variable
+        js_conf->enabled_variable_name.data = value[1].data + 1;
+        js_conf->enabled_variable_name.len = value[1].len - 1;
+        js_conf->enabled = NGX_CONF_UNSET;  // Variable overrides the flag
     } else {
-        // If the value starts with '$', treat it as a variable
-        if (value[1].data[0] == '$') {
-            js_conf->enabled_variable_name.data = value[1].data + 1;
-            js_conf->enabled_variable_name.len = value[1].len - 1;
-            js_conf->enabled = NGX_CONF_UNSET;  // Variable overrides the flag
-        } else {
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                "[js-challenge] invalid value \"%V\" in js_challenge directive, must be \"on\", \"off\", or a variable", &value[1]);
-            return NGX_CONF_ERROR;
-        }
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+            "[js-challenge] invalid value \"%V\" in js_challenge directive, must be \"on\", \"off\", or a variable", &value[1]);
+        return NGX_CONF_ERROR;
     }
 
     return NGX_CONF_OK;
@@ -361,32 +359,29 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 /* 1. Check if module is Enabled */
 
     ngx_http_js_challenge_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_http_js_challenge_module);
-    ngx_flag_t is_enabled = conf->enabled;
+    if (conf->enabled == 0) {
+        return NGX_DECLINED;
+    }
 
-    // If a variable name was passed instead of a flag
-    if (conf->enabled_variable_name.len > 0 && conf->enabled == NGX_CONF_UNSET) {
-        ngx_str_t variable_value;
-
+    if (conf->enabled == NGX_CONF_UNSET) {
         // Get the value of the variable
         ngx_uint_t key = ngx_hash_strlow(conf->enabled_variable_name.data, conf->enabled_variable_name.data, conf->enabled_variable_name.len);
         ngx_http_variable_value_t *var = ngx_http_get_variable(r, &conf->enabled_variable_name, key);
 
+        // if empty value => challenge off
         if (var == NULL || var->not_found) {
             ngx_str_t *var_name = &conf->enabled_variable_name;
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "[js-challenge] variable %*s not found or empty", var_name->len, var_name->data);
             return NGX_DECLINED;
         }
 
-        variable_value.data = var->data;
-        variable_value.len = var->len;
-
-        is_enabled = (ngx_strncmp(variable_value.data, "on", variable_value.len) == 0) ||
-                     (ngx_strncmp(variable_value.data, "1", variable_value.len) == 0)
-                     ? 1 : 0;
-    }
-
-    if (!is_enabled) {
-        return NGX_DECLINED;
+        // if variable value is `off` or `0` => challenge off
+        ngx_str_t off_val = ngx_string("off");
+        ngx_str_t zero_val = ngx_string("0");
+        if ((var->len == off_val.len && ngx_strncmp(var->data, off_val.data, off_val.len) == 0) ||
+            (var->len == zero_val.len && ngx_strncmp(var->data, zero_val.data, zero_val.len) == 0)) {
+            return NGX_DECLINED;
+        }
     }
 
 /* 2. Check no_cookie parameter in the query string */
