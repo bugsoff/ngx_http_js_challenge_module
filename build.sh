@@ -29,7 +29,9 @@ if [ -z "$NGINX_VERSION" ]; then
   echo "Nginx version: $NGINX_VERSION";
 fi
 
-MODULE_PATH=$(pwd)/
+MODULE_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd -- "$MODULE_PATH" || exit
+
 if [ -z ${NGINX_PATH+x} ]; then
   wget "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
   tar -xzf "nginx-${NGINX_VERSION}.tar.gz"
@@ -47,7 +49,7 @@ echo "$CONFIG_ARGS"
 ) || exit 9
 
 
-mv "${NGINX_PATH}/objs/ngx_http_js_challenge_module.so" "$MODULE_PATH/"
+mv "${NGINX_PATH}/objs/ngx_http_js_challenge_module.so" "$MODULE_PATH"
 rm -r "${NGINX_PATH}"
 rm "nginx-${NGINX_VERSION}.tar.gz"
 
