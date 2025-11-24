@@ -1,8 +1,7 @@
 # ngx_http_js_challenge_module
 
-[![GitHub License](https://img.shields.io/github/license/simon987/ngx_http_js_challenge_module.svg)](LICENSE)
-[![CodeFactor](https://www.codefactor.io/repository/github/simon987/ngx_http_js_challenge_module/badge)](https://www.codefactor.io/repository/github/simon987/ngx_http_js_challenge_module)
-[![Demo Website](https://img.shields.io/badge/demo-website-blue.svg)](https://ngx-js-demo.simon987.net/)
+[![GitHub License](https://img.shields.io/github/license/bugsoff/ngx_http_js_challenge_module.svg)](LICENSE)
+[![CodeFactor](https://www.codefactor.io/repository/github/bugsoff/ngx_http_js_challenge_module/badge)](https://www.codefactor.io/repository/github/bugsoff/ngx_http_js_challenge_module)
 
 Simple JavaScript proof-of-work based access control for Nginx, designed to provide security with minimal overhead.
 
@@ -21,13 +20,20 @@ Simple JavaScript proof-of-work based access control for Nginx, designed to prov
    ```
 
 2. **Configuration**
-   Use the simple or advanced configurations provided below to customize the module to your needs.
+   For basic setup, update your server block as follows:
+
+   ```
+   server {
+       js_challenge on;
+       js_challenge_secret "changeme!";  # Ensure to replace this with a strong secret in production
+   }
+   ```
 
 ## Installation
 
 To install the ngx_http_js_challenge_module, follow these steps:
 
-1. Add the module loading directive to your Nginx configuration file (`/etc/nginx/nginx.conf`):
+1. Add the module loading directive to your Nginx configuration file (`/etc/nginx/nginx.conf`) at root section:
    ```
    load_module /path/to/ngx_http_js_challenge_module.so;
    ```
@@ -39,25 +45,14 @@ To install the ngx_http_js_challenge_module, follow these steps:
 
 ## Configuration
 
-### Basic Configuration
-
-For basic setup, update your server block as follows:
-
-```
-server {
-    js_challenge on;
-    js_challenge_secret "change me!";  # Ensure to replace this with a strong secret in production
-}
-```
-
 ### Advanced Configuration
 
 For more complex setups, including exemptions for specific paths:
 
-```
+```nginx configuration
 server {
     js_challenge on;
-    js_challenge_secret "change me!";
+    js_challenge_secret "changeme!";
     js_challenge_html "/path/to/body.html";
     js_challenge_bucket_duration 3600;
     js_challenge_title "Verifying your browser...";
@@ -71,8 +66,41 @@ server {
         js_challenge_bucket_duration 600;
         # Add further customization here
     }
+    
 }
 ```
+
+### Dynamic configuration
+
+To enable or disable the module depending on external request conditions:
+```nginx configuration
+ geo $whitelisted_addr {
+     127.0.0.1       off;
+     192.168.0.0/24  off;
+     default         on;
+ }
+ 
+ map $http_user_agent $whitelisted_agent {
+     "~*Googlebot"   off;
+     default         on;
+ }
+ 
+ map "$whitelisted_addr:$whitelisted_agent" $js_challenge_enabled {
+     "~*off"         off;
+     default         on;
+ }
+ 
+ server {
+    js_challenge $js_challenge_enabled;
+    js_challenge_secret "changeme!";
+ 
+    location /static {
+        js_challenge off;
+    }
+}
+    
+```
+
 
 ### Parameters
 
@@ -82,36 +110,42 @@ server {
 - **js_challenge_title "title"** Will be inserted in the `<title>` tag of the interstitial page. DEFAULT: "Verifying your browser..."
 - **js_challenge_bucket_duration time** Interval to prompt js challenge, in seconds. DEFAULT: 3600
 
-### Installation
 
-1. Add `load_module ngx_http_js_challenge_module.so;` to `/etc/nginx/nginx.conf`
-2. Reload `nginx -s reload`
-
-### Build from source
+## Build from source
 
 These steps have to be performed on machine with compatible configuration (same nginx, glibc, openssl version etc.)
 
 1. Install dependencies
     ```
-    apt install libperl-dev libgeoip-dev libgd-dev libxslt1-dev libpcre3-dev
+      apt update
+      apt install build-essential libpcre3-dev zlib1g-dev libssl-dev -y
     ```
-2. Download nginx tarball corresponding to your current version (Check with `nginx -v`)
+2. Compile the module
     ```
-    wget https://nginx.org/download/nginx-1.25.4.tar.gz
-    tar -xzf nginx-1.25.4.tar.gz
-    export NGINX_PATH=$(pwd)/nginx-1.25.4/
+    git clone https://github.com/bugsoff/ngx_http_js_challenge_module
+    bash ngx_http_js_challenge_module/build.sh
     ```
-3. Compile the module
-    ```
-    git clone https://github.com/simon987/ngx_http_js_challenge_module
-    cd ngx_http_js_challenge_module
-    ./build.sh
-    ```
-4. The dynamic module can be found at `${NGINX_PATH}/objs/ngx_http_js_challenge_module.so`
+3. The dynamic module can be found at `ngx_http_js_challenge_module/ngx_http_js_challenge_module.so`
 
-### Known limitations (To Do)
+### Docker
 
-* None
+Here is an example Dockerfile for installing the module into an Nginx container:
+
+```dockerfile
+FROM nginx:1.29.3-alpine
+
+RUN apk add --no-cache git bash linux-headers build-base pcre-dev openssl-dev zlib-dev
+
+RUN git clone https://github.com/bugsoff/ngx_http_js_challenge_module.git &&\
+    ngx_http_js_challenge_module/build.sh &&\
+    mv ngx_http_js_challenge_module/ngx_http_js_challenge_module.so /etc/nginx/modules &&\
+    rm -rf ./ngx_http_js_challenge_module
+
+RUN TMP_FILE="$(mktemp)" &&\
+    echo "load_module modules/ngx_http_js_challenge_module.so;" > "$TMP_FILE" &&\
+    cat "/etc/nginx/nginx.conf" >> "$TMP_FILE" &&\
+    mv "$TMP_FILE" "/etc/nginx/nginx.conf"
+```
 
 ### Throughput
 <p align="center">
