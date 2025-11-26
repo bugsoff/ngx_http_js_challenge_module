@@ -405,7 +405,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
         out.buf = b;
         out.next = NULL;
 
-        b->pos = (u_char *)"<html><head><title>Cookies Required</title></head><body><h1>Cookies Required</h1><p>Please enable cookies in your browser to continue.</p></body></html>";
+        b->pos = (u_char *)"<html><head><title>Enable Cookies</title></head><body><h1>Cookies are required to continue.</h1><strong>Please enable them in your browser settings.</strong></body></html>";
         b->last = b->pos + strlen((char *)b->pos);
         b->memory = 1;      // memory of the buffer is readonly
         b->last_buf = 1;    // this is the last buffer in the buffer chain
@@ -461,7 +461,6 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
             }
         }
     }
-
 
 /* 4. Get User-Agent */
 
@@ -544,7 +543,7 @@ static ngx_int_t ngx_http_js_challenge(ngx_conf_t *cf) {
     ngx_http_handler_pt *h;
     ngx_http_core_main_conf_t *main_conf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
-    h = ngx_array_push(&main_conf->phases[NGX_HTTP_PRECONTENT_PHASE].handlers);
+    h = ngx_array_push(&main_conf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
     if (h == NULL) {
         ngx_log_error(NGX_LOG_ERR, cf->log, 0, "null");
         return NGX_ERROR;
