@@ -510,6 +510,21 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
 
+    // if c_time cookie exists, this is the first request after the challenge has passed
+    double c_time = get_c_time_cookie(r);
+    if (c_time > 0) {
+        // reset c_time cookie
+        ngx_table_elt_t *set_cookie = ngx_list_push(&r->headers_out.headers);
+        if (set_cookie != NULL) {
+            set_cookie->hash = 1;
+            ngx_str_set(&set_cookie->key, "Set-Cookie");
+            ngx_str_set(&set_cookie->value, "c_time=null; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/");
+        }
+        if (conf->log == 1) {
+            ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] %V challenge passed at %0.2f sec, c_token: %s", &addr, c_time, challenge);
+        }
+    }
+
     conf->challenge_passed = 1;
 
     // Fallthrough next handler
@@ -622,6 +637,43 @@ static int get_cookie(ngx_http_request_t *r, ngx_str_t *name, ngx_str_t *value) 
     }
 
     return -1;
+}
+
+/**
+ * Get cookie c_time value as double.
+ * @return <double>    if correct value
+ *         0           if cookie is empty
+ *         -1.0        if wrong value
+ */
+static double get_c_time_cookie(ngx_http_request_t *r)
+{
+    ngx_str_t cookie_name = ngx_string("c_time");
+    ngx_str_t response;
+
+    if (get_cookie(r, &cookie_name, &response) != 0) {
+        return 0;
+    }
+    if (response.len > 16) {
+        return -1.0;
+    }
+
+    u_char *start = response.data;
+    u_char *end = response.data + response.len;
+    int dot_count = 0;
+    for (u_char *p = start; p < end; p++) {
+        if ((*p == '.') && (++dot_count > 1)) {    // more than one dot
+            return -1.0;
+        } else if (!isdigit(*p)) {
+            return -1.0;
+        }
+    }
+
+    double c_time = ngx_strtod(start, end);
+    if (c_time < 0 || c_time > 900) {
+        return -1.0;
+    }
+
+    return c_time;
 }
 
 static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md) {
