@@ -34,6 +34,7 @@ typedef struct {
     ngx_str_t secret;
     ngx_str_t html_path;
     ngx_str_t title;
+    ngx_flag_t log;
     char *html;
     ngx_str_t enabled_variable_name;
     ngx_flag_t challenge_served;
@@ -94,6 +95,14 @@ static ngx_command_t ngx_http_js_challenge_commands[] = {
                 ngx_conf_set_str_slot,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_js_challenge_loc_conf_t, title),
+                NULL
+        },
+        {
+                ngx_string("js_challenge_log"),
+                NGX_HTTP_LOC_CONF | NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+                ngx_conf_set_str_flag,
+                NGX_HTTP_LOC_CONF_OFFSET,
+                offsetof(ngx_http_js_challenge_loc_conf_t, log),  // Use for "on"/"off"
                 NULL
         },
         ngx_null_command
@@ -164,6 +173,7 @@ static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf) {
     conf->enabled_variable_name = (ngx_str_t) {0, NULL};
     conf->challenge_served = 0;
     conf->challenge_passed = 0;
+    conf->log = 0;
 
     return conf;
 }
@@ -180,6 +190,7 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
     ngx_conf_merge_uint_value(conf->bucket_duration, prev->bucket_duration, 3600)
     ngx_conf_merge_str_value(conf->html_path, prev->html_path, NULL)
     ngx_conf_merge_str_value(conf->title, prev->title, DEFAULT_TITLE)
+    ngx_conf_merge_value(conf->log, prev->log, 0)
 
     // _enabled
     if (conf->enabled == NGX_CONF_UNSET && conf->enabled_variable_name.data == NULL) {
@@ -484,11 +495,17 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
     // no cookie received
     if (get_cookie(r, &cookie_name, &response) != 0) {
         conf->challenge_served = 1;
+        if (conf->log == 1) {
+            ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] %V new c_token served: %s", &addr, challenge);
+        }
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
 
     // wrong challenge-response in cookies
     if (verify_response(response, challenge) != 0) {
+        if (conf->log == 1) {
+            ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] %V wrong/expired c_token (%s), update c_token: %s", &addr, response.data, challenge);
+        }
         conf->challenge_served = 1;
         return serve_challenge(r, challenge, conf->html, conf->title);
     }
