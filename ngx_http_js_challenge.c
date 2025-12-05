@@ -26,11 +26,19 @@
         "%s" \
         "</body></html>"
 
-#define DEFAULT_TITLE "Browser Verification"
+static const char *challenge_levels[] = {
+    "s[n1]===0xb0",
+    "(s[n1]===0xb0)&&(s[n1+0x1]<0x2)",
+    "(s[n1]===0xb0)&&(s[n1+0x1]===0xb)",
+    "(s[n1]===0xb0)&&(s[n1+0x1]===0xb)&&(s[n1+0x2]<0x80)",
+    "(s[n1]===0xb0)&&(s[n1+0x1]===0xb)&&(s[n1+0x2]<0x40)",
+    "(s[n1]===0xb0)&&(s[n1+0x1]===0xb)&&(s[n1+0x2]<0x2)",
+};
 
 typedef struct {
     ngx_flag_t enabled;
     ngx_uint_t bucket_duration;
+    ngx_uint_t level;
     ngx_str_t secret;
     ngx_str_t html_path;
     ngx_str_t title;
@@ -70,6 +78,14 @@ static ngx_command_t ngx_http_js_challenge_commands[] = {
                 ngx_conf_set_num_slot,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_js_challenge_loc_conf_t, bucket_duration),
+                NULL
+        },
+        {
+                ngx_string("js_challenge_level"),
+                NGX_HTTP_LOC_CONF | NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+                ngx_conf_set_num_slot,
+                NGX_HTTP_LOC_CONF_OFFSET,
+                offsetof(ngx_http_js_challenge_loc_conf_t, level),
                 NULL
         },
         {
@@ -160,6 +176,7 @@ static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf) {
 
     conf->secret = (ngx_str_t) {0, NULL};
     conf->bucket_duration = NGX_CONF_UNSET_UINT;
+    conf->level = NGX_CONF_UNSET_UINT;
     conf->enabled = NGX_CONF_UNSET;
     conf->enabled_variable_name = (ngx_str_t) {0, NULL};
     conf->challenge_served = 0;
@@ -178,6 +195,7 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
     ngx_conf_merge_str_value(conf->enabled_variable_name, prev->enabled_variable_name, NULL)
     ngx_conf_merge_str_value(conf->secret, prev->secret, DEFAULT_SECRET)
     ngx_conf_merge_uint_value(conf->bucket_duration, prev->bucket_duration, 3600)
+    ngx_conf_merge_uint_value(conf->level, prev->level, 2)
     ngx_conf_merge_str_value(conf->html_path, prev->html_path, NULL)
     ngx_conf_merge_str_value(conf->title, prev->title, DEFAULT_TITLE)
 
@@ -197,6 +215,12 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
     if (conf->bucket_duration < 1) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "[js-challenge] bucket_duration must be equal or more than 1");
         return NGX_CONF_ERROR;
+    }
+
+    // _level
+    if (conf->level > 5) {
+        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "[js-challenge] level cannot exceed 5, using 5 as maximum");
+        conf->level = 5;
     }
 
     // _html_path
@@ -285,7 +309,7 @@ ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_
 }
 
 
-static int serve_challenge(ngx_http_request_t *r, const char *challenge, const char *html, ngx_str_t title) {
+static int serve_challenge(ngx_http_request_t *r, const char *challenge, ngx_uint_t level, const char *html, ngx_str_t title) {
     ngx_buf_t *b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
     ngx_chain_t out;
 
@@ -300,11 +324,12 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, const c
     unsigned char buf[32768];
     static const ngx_str_t content_type = ngx_string("text/html;charset=utf-8");
 
+    const char *level_str = challenge_levels[level];
+
     if (html == NULL) {
         html = "<h1>Your connection is being verified<h1><p>Please wait...</p>";
     }
-
-    size_t size = snprintf((char *) buf, sizeof(buf), JS_SOLVER_TEMPLATE, title_c_str, challenge_c_str, html);
+    size_t size = snprintf((char *) buf, sizeof(buf), JS_SOLVER_TEMPLATE, title_c_str, challenge_c_str, level_str, html);
 
     out.buf = b;
     out.next = NULL;
@@ -326,12 +351,40 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, const c
     return NGX_DONE;
 }
 
+typedef int (*verify_fn)(u_char *md, ngx_uint_t nibble);
+
+static int verify_level0(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 ? 0 : -1;
+}
+static int verify_level1(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 && md[nibble+1] < 0x2 ? 0 : -1;
+}
+static int verify_level2(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 && md[nibble+1] == 0x0B ? 0 : -1;
+}
+static int verify_level3(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 && md[nibble+1] == 0x0B && md[nibble+2] < 0x80 ? 0 : -1;
+}
+static int verify_level4(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 && md[nibble+1] == 0x0B && md[nibble+2] < 0x40 ? 0 : -1;
+}
+static int verify_level5(u_char *md, ngx_uint_t nibble) {
+    return md[nibble] == 0xB0 && md[nibble+1] == 0x0B && md[nibble+2] < 0x20 ? 0 : -1;
+}
+
+static verify_fn verify_levels[] = {
+        verify_level0,
+        verify_level1,
+        verify_level2,
+        verify_level3,
+        verify_level4,
+        verify_level5
+};
 
 /*
  * Response is valid if it starts by the challenge, and
  * its SHA1 hash contains the digits 0xB00B at the offset
  * of the first digit
- * And first symbol of response is 0 or 1
  *
  * e.g.
  * challenge =      "CC003677C91D53E29F7095FF90C670C69C7C46E7"
@@ -339,9 +392,9 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, const c
  * SHA1(response) = "011FCCD9ECB2306631FBF530B00B196D0C4AA8AE"
  *                                           ^ offset 24
  */
-static int verify_response(ngx_str_t response, char *challenge) {
+static int verify_response(ngx_str_t response, char *challenge, ngx_uint_t level) {
 
-    // if more then 12 additional chars => wrong
+    // if more than 12 additional chars => wrong
     if (response.len <= SHA1_STR_LEN || response.len > SHA1_STR_LEN + 12) {
         return -1;
     }
@@ -358,7 +411,9 @@ static int verify_response(ngx_str_t response, char *challenge) {
         ? challenge[0] - '0'
         : challenge[0] - 'A' + 10;
 
-    return md[nibble] == 0xB0 && md[nibble + 1] == 0x0B && (md[0] == 0x0 || md[0] == 0x1) ? 0 : -1;
+    if (level > 5) level = 5;
+
+    return verify_levels[level](md, nibble);
 }
 
 
@@ -484,13 +539,13 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
     // no cookie received
     if (get_cookie(r, &cookie_name, &response) != 0) {
         conf->challenge_served = 1;
-        return serve_challenge(r, challenge, conf->html, conf->title);
+        return serve_challenge(r, challenge, conf->level, conf->html, conf->title);
     }
 
     // wrong challenge-response in cookies
-    if (verify_response(response, challenge) != 0) {
+    if (verify_response(response, challenge, conf->level) != 0) {
         conf->challenge_served = 1;
-        return serve_challenge(r, challenge, conf->html, conf->title);
+        return serve_challenge(r, challenge, conf->level, conf->html, conf->title);
     }
 
     conf->challenge_passed = 1;
