@@ -69,6 +69,7 @@ static void buf2hex(const unsigned char *buf, size_t buflen, char *hex_string);
 static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md);
 static int is_private_ip(const char *ip);
 static int get_cookie(ngx_http_request_t *r, ngx_str_t *name, ngx_str_t *value);
+static double get_c_time_cookie(ngx_http_request_t *r);
 
 
 static ngx_command_t ngx_http_js_challenge_commands[] = {
@@ -123,7 +124,7 @@ static ngx_command_t ngx_http_js_challenge_commands[] = {
         {
                 ngx_string("js_challenge_log"),
                 NGX_HTTP_LOC_CONF | NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-                ngx_conf_set_str_flag,
+                ngx_conf_set_flag_slot,
                 NGX_HTTP_LOC_CONF_OFFSET,
                 offsetof(ngx_http_js_challenge_loc_conf_t, log),  // Use for "on"/"off"
                 NULL
@@ -195,9 +196,7 @@ static void *ngx_http_js_challenge_create_loc_conf(ngx_conf_t *cf) {
     conf->level = NGX_CONF_UNSET_UINT;
     conf->enabled = NGX_CONF_UNSET;
     conf->enabled_variable_name = (ngx_str_t) {0, NULL};
-    conf->challenge_served = 0;
-    conf->challenge_passed = 0;
-    conf->log = 0;
+    conf->log = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -715,7 +714,7 @@ static int get_cookie(ngx_http_request_t *r, ngx_str_t *name, ngx_str_t *value) 
  * Get cookie c_time value as double.
  * @return <double>    if correct value
  *         0           if cookie is empty
- *         -1.0        if wrong value
+ *         < 0         if wrong value
  */
 static double get_c_time_cookie(ngx_http_request_t *r)
 {
@@ -723,26 +722,37 @@ static double get_c_time_cookie(ngx_http_request_t *r)
     ngx_str_t response;
 
     if (get_cookie(r, &cookie_name, &response) != 0) {
-        return 0;
+        return 0.0;
     }
-    if (response.len > 16) {
+    if (response.len > 20) {
         return -1.0;
     }
 
     u_char *start = response.data;
     u_char *end = response.data + response.len;
+    size_t point = 0;
     int dot_count = 0;
     for (u_char *p = start; p < end; p++) {
-        if ((*p == '.') && (++dot_count > 1)) {    // more than one dot
-            return -1.0;
+        if (*p == '.') {
+            point = end - p - 1;
+            if (++dot_count > 1) {    // more than one dot
+                return -2.0;
+            }
         } else if (!isdigit(*p)) {
-            return -1.0;
+            return -3.0;
         }
     }
 
-    double c_time = ngx_strtod(start, end);
+    ngx_int_t n = ngx_atofp(start, response.len, point);
+    if (n == NGX_ERROR) {
+        return -4.0;
+    }
+    double c_time = (double) n;
+    while (point--) {
+        c_time /= 10.0;
+    }
     if (c_time < 0 || c_time > 900) {
-        return -1.0;
+        return -5.0;
     }
 
     return c_time;
