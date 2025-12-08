@@ -54,11 +54,10 @@ typedef struct {
     ngx_str_t enabled_variable_name;
 } ngx_http_js_challenge_loc_conf_t;
 
-typedef struct {
-    ngx_uint_t challenge_served;
-    ngx_uint_t challenge_passed;
-} ngx_http_js_challenge_ctx_t;
+#define CHALLENGE_SERVED 0
+#define CHALLENGE_PASSED 1
 
+static ngx_int_t js_challenge_served_index = NGX_ERROR;
 static ngx_int_t js_challenge_passed_index = NGX_ERROR;
 
 static ngx_int_t ngx_http_js_challenge_postconfiguration(ngx_conf_t *cf);
@@ -448,22 +447,22 @@ static int verify_response(ngx_str_t response, char *challenge, ngx_uint_t level
     return verify_levels[level](md, nibble);
 }
 
-static ngx_http_js_challenge_ctx_t* get_module_ctx(ngx_http_request_t *r)
+static void fire_challenge_status(ngx_uint_t var_num, ngx_http_request_t *r)
 {
-    ngx_http_js_challenge_ctx_t *ctx;
-
-    ctx = ngx_http_get_module_ctx(r, ngx_http_js_challenge_module);
-
-    if (ctx == NULL) {
-        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_js_challenge_ctx_t));
-        if (ctx == NULL) {
-            return NULL;
-        }
-
-        ngx_http_set_ctx(r, ctx, ngx_http_js_challenge_module);
+    ngx_int_t var_indx;
+    switch (var_num) {
+        case 0: var_indx = js_challenge_served_index; break;
+        case 1: var_indx = js_challenge_passed_index; break;
     }
 
-    return ctx;
+    if (var_indx != NGX_ERROR) {
+        ngx_http_variable_value_t *var = &r->variables[var_indx];
+        static u_char one[] = "1";
+        var->data = one;
+        var->valid = 1;
+        var->len = 1;
+        var->no_cacheable = 0;
+    }
 }
 
 static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
@@ -473,16 +472,10 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
     if (js_challenge_passed_index != NGX_ERROR) {
         ngx_http_variable_value_t *js_challenge_passed = &r->variables[js_challenge_passed_index];
         // already processed in another context
-        if (js_challenge_passed->valid && js_challenge_passed->len == 1 && js_challenge_passed->data[0] == '1') {
+        if (js_challenge_passed->valid && js_challenge_passed->len ==1 && js_challenge_passed->data[0] == '1') {
             return NGX_DECLINED;
         }
-    } else {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "[js-challenge] Variable js_challenge_passed not ready, continue");
     }
-
-    ngx_http_js_challenge_ctx_t *ctx = get_module_ctx(r);
-    ctx->challenge_served = 0;
-    ctx->challenge_passed = 0;
 
     /* 1. Check if module is Enabled */
 
@@ -607,8 +600,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
     // no cookie received
     if (get_cookie(r, &cookie_name, &response) != 0) {
-        ctx->challenge_served = 1;
-        ctx->challenge_passed = 0;
+        fire_challenge_status(CHALLENGE_SERVED, r);
         if (conf->log == 1) {
             ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] new c_token served: %V", &c_token);
         }
@@ -617,26 +609,14 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
     // wrong challenge-response in cookies
     if (verify_response(response, challenge, conf->level) != 0) {
-        ctx->challenge_served = 1;
-        ctx->challenge_passed = 0;
+        fire_challenge_status(CHALLENGE_SERVED, r);
         if (conf->log == 1) {
             ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] wrong/expired c_token (%V), update c_token: %V", &response, &c_token);
         }
         return serve_challenge(r, challenge, conf->level, conf->html, conf->title);
     }
 
-    ctx->challenge_served = 0;
-    ctx->challenge_passed = 1;
-
-    if (js_challenge_passed_index != NGX_ERROR) {
-        ngx_http_variable_value_t *js_challenge_passed = &r->variables[js_challenge_passed_index];
-        static u_char one[] = "1";
-        js_challenge_passed->data = one;
-        js_challenge_passed->len = 1;
-        js_challenge_passed->valid = 1;
-        js_challenge_passed->no_cacheable = 0;
-        js_challenge_passed->not_found = 0;
-    }
+    fire_challenge_status(CHALLENGE_PASSED, r);
 
     // if c_time cookie exists, this is the first request after the challenge has passed
     double c_time = get_c_time_cookie(r);
@@ -660,49 +640,16 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 ////////////////////////////////////////////////////////////////////////////////
 
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
-    ngx_http_js_challenge_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_js_challenge_module);
-
-    if (!ctx) {
-        v->data = ctx->challenge_served == 1 ? (u_char *) "1" : (u_char *) "0";
-        v->len = 1;
-        v->valid = 1;
-        v->no_cacheable = 1;
-        v->not_found = 0;
-    } else {
-        v->not_found = 1;
-    }
-
     return NGX_OK;
 }
 
 static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data){
-    ngx_http_js_challenge_ctx_t* ctx = ngx_http_get_module_ctx(r, ngx_http_js_challenge_module);
-
-    if (!ctx) {
-        v->data = ctx->challenge_passed == 1 ? (u_char *) "1" : (u_char *) "0";
-        v->len = 1;
-        v->valid = 1;
-        v->no_cacheable = 1;
-        v->not_found = 0;
-    } else {
-        v->not_found = 1;
-    }
-
     return NGX_OK;
 }
 
 static ngx_int_t ngx_http_js_challenge_postconfiguration(ngx_conf_t *cf)
 {
-    // 1. static var challenge_passed
-    ngx_str_t var_name;
-    ngx_str_set(&var_name, "js_challenge_passed");
-    js_challenge_passed_index = ngx_http_get_variable_index(cf, &var_name);
-    if (js_challenge_passed_index == NGX_ERROR) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Failed to get variable index for js_challenge_passed");
-        return NGX_ERROR;
-    }
-
-    // 2. variables
+    // 1. register variables
     ngx_http_variable_t *var;
     for (var = ngx_http_js_challenge_vars; var->name.len; var++) {
         ngx_http_variable_t *v = ngx_http_add_variable(cf, &var->name, var->flags);
@@ -712,6 +659,13 @@ static ngx_int_t ngx_http_js_challenge_postconfiguration(ngx_conf_t *cf)
         v->get_handler = var->get_handler;
         v->data = var->data;
     }
+
+    // 2. static var challenge_passed_index
+    ngx_str_t var_name;
+    ngx_str_set(&var_name, "js_challenge_served");
+    js_challenge_served_index = ngx_http_get_variable_index(cf, &var_name);
+    ngx_str_set(&var_name, "js_challenge_passed");
+    js_challenge_passed_index = ngx_http_get_variable_index(cf, &var_name);
 
     // 3. handler
     ngx_http_handler_pt *h;
