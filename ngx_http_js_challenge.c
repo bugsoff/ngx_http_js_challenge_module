@@ -244,6 +244,12 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
         conf->level = MAX_LEVEL;
     }
 
+    // _title
+    if (conf->title.len > 1023) {
+        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "[js-challenge] title is too long, will be truncated to 1023 bytes");
+        conf->title.len = 1023;
+    }
+
     // _html_path
     if (conf->html_path.data == NULL) {
         conf->html = NULL;
@@ -341,7 +347,7 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, ngx_uin
     memcpy(challenge_c_str, challenge, SHA1_STR_LEN);
     *(challenge_c_str + SHA1_STR_LEN) = '\0';
 
-    char title_c_str[4096];
+    char title_c_str[1024];
     memcpy(title_c_str, title.data, title.len);
     *(title_c_str + title.len) = '\0';
 
