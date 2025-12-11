@@ -351,7 +351,10 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, ngx_uin
     memcpy(title_c_str, title.data, title.len);
     *(title_c_str + title.len) = '\0';
 
-    unsigned char buf[32768];
+    u_char *buf = ngx_pnalloc(r->pool, 65536);
+    if (buf == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
     static const ngx_str_t content_type = ngx_string("text/html;charset=utf-8");
 
     const char *level_str = challenge_levels[level];
@@ -364,7 +367,6 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, ngx_uin
     out.buf = b;
     out.next = NULL;
 
-    // TODO: is that stack buffer gonna cause problems?
     b->pos = buf;
     b->last = buf + size;
     b->memory = 1;
