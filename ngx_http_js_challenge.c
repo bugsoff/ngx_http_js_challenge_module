@@ -308,12 +308,12 @@ static char *ngx_http_js_challenge_set_flag_or_variable(ngx_conf_t *cf, ngx_comm
  * @param out 40 bytes long string!
  */
 ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_str_t user_agent, ngx_str_t secret, char *out) {
-    char buf[4096];
+    unsigned char buf[4096];
     unsigned char md[SHA1_MD_LEN];
-    char *p = (char *) &bucket;
+    const char *p = (char *) &bucket;
     size_t offset = 0;
 
-    memcpy(buf + offset, p, sizeof(bucket));                // Copy the bucket
+    memcpy(buf + offset, p, sizeof(bucket));            // Copy the bucket
     offset += sizeof(bucket);
 
     memcpy(buf + offset, addr.data, addr.len);              // Copy the IP address
@@ -322,11 +322,14 @@ ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_
     memcpy(buf + offset, secret.data, secret.len);          // Copy the secret
     offset += secret.len;
 
-    size_t max_len = sizeof(buf) - offset > user_agent.len ? user_agent.len : sizeof(buf) - offset; // cut User-Agent if it too long
+    size_t max_len = sizeof(buf) - offset > user_agent.len      // Cut User-Agent if it too long
+                         ? user_agent.len
+                         : sizeof(buf) - offset;
     memcpy(buf + offset, user_agent.data, max_len);         // Copy the User-Agent up to max_len
+    offset += max_len;
 
-    __sha1((unsigned char *) buf, (size_t) (offset + secret.len), md);      // Calculate SHA1 hash of the concatenated data
-    buf2hex(md, SHA1_MD_LEN, out);                                          // Convert the hash to a hexadecimal string
+    __sha1(buf, offset, md);                                    // Calculate SHA1 hash of the concatenated data
+    buf2hex(md, SHA1_MD_LEN, out);                        // Convert the hash to a hexadecimal string
 }
 
 
