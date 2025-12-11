@@ -269,16 +269,15 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
             return NGX_CONF_ERROR;
         }
 
-        conf->html = ngx_palloc(cf->pool, info.st_size);
-        int ret = read(fd, conf->html, info.st_size-1);
-        if (ret == info.st_size) {
-            *(conf->html+ret) = '\0';
-            close(fd);
-        }
-        if (ret < 0) {
+        conf->html = ngx_palloc(cf->pool, info.st_size+1);
+        int ret = read(fd, conf->html, info.st_size);
+        if (ret <= 0) {
             ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "[js-challenge] html: Could not read file '%s': %s", path, strerror(errno));
+            close(fd);
             return NGX_CONF_ERROR;
         }
+        conf->html[ret] = '\0';
+        close(fd);
     }
 
     return NGX_CONF_OK;
@@ -363,7 +362,7 @@ static int serve_challenge(ngx_http_request_t *r, const char *challenge, ngx_uin
     if (html == NULL) {
         html = DEFAULT_HTML;
     }
-    size_t size = snprintf((char *) buf, sizeof(buf), JS_SOLVER_TEMPLATE, title_c_str, challenge_c_str, level_str, html);
+    size_t size = snprintf((char *) buf, 65536, JS_SOLVER_TEMPLATE, title_c_str, challenge_c_str, level_str, html);
 
     out.buf = b;
     out.next = NULL;
