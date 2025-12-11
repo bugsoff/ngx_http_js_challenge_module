@@ -456,6 +456,7 @@ static void fire_challenge_status(ngx_uint_t var_num, ngx_http_request_t *r)
     switch (var_num) {
         case 0: var_indx = js_challenge_served_index; break;
         case 1: var_indx = js_challenge_passed_index; break;
+        default: return;
     }
 
     if (var_indx != NGX_ERROR) {
@@ -465,6 +466,7 @@ static void fire_challenge_status(ngx_uint_t var_num, ngx_http_request_t *r)
         var->valid = 1;
         var->len = 1;
         var->no_cacheable = 0;
+        var->not_found = 0;
     }
 }
 
