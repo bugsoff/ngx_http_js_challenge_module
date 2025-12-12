@@ -60,7 +60,7 @@ typedef struct {
 static ngx_int_t js_challenge_served_index = NGX_ERROR;
 static ngx_int_t js_challenge_passed_index = NGX_ERROR;
 
-static ngx_int_t ngx_http_js_challenge_postconfiguration(ngx_conf_t *cf);
+static ngx_int_t ngx_http_js_challenge_init(ngx_conf_t *cf);
 static char *ngx_http_js_challenge_set_flag_or_variable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_js_challenge_served_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
@@ -160,8 +160,8 @@ static ngx_http_variable_t ngx_http_js_challenge_vars[] = {
  * Module context
  */
 static ngx_http_module_t ngx_http_js_challenge_module_ctx = {
-        NULL,                   // preconfiguration
-        ngx_http_js_challenge_postconfiguration,  // postconfiguration
+    NULL,                               // preconfiguration
+        ngx_http_js_challenge_init,     // postconfiguration
 
         NULL,
         NULL,
@@ -660,7 +660,7 @@ static ngx_int_t ngx_http_js_challenge_passed_var(ngx_http_request_t *r, ngx_htt
     return NGX_OK;
 }
 
-static ngx_int_t ngx_http_js_challenge_postconfiguration(ngx_conf_t *cf)
+static ngx_int_t ngx_http_js_challenge_init(ngx_conf_t *cf)
 {
     // 1. register variables
     ngx_http_variable_t *var;
