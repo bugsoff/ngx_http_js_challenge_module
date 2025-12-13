@@ -56,6 +56,7 @@ server {
     js_challenge_html "/path/to/body.html";
     js_challenge_bucket_duration 3600;
     js_challenge_title "Verifying your browser...";
+    js_challenge_log on;
 
     location /static {
         js_challenge off;
@@ -81,8 +82,8 @@ To enable or disable the module depending on external request conditions:
  }
  
  map $http_user_agent $whitelisted_agent {
-     "~*Googlebot"   off;
-     default         on;
+     "~*curl"  off;
+     default   on;
  }
  
  map "$whitelisted_addr:$whitelisted_agent" $js_challenge_enabled {
@@ -109,6 +110,7 @@ To enable or disable the module depending on external request conditions:
 - **js_challenge_html "/path/to/file.html"** Path to html file to be inserted in the `<body>` tag of the interstitial page
 - **js_challenge_title "title"** Will be inserted in the `<title>` tag of the interstitial page. DEFAULT: "Verifying your browser..."
 - **js_challenge_bucket_duration time** Interval to prompt js challenge, in seconds. DEFAULT: 3600
+- **js_challenge_log on|off** Enable logging for events when a JS challenge is served or passed. DEFAULT: off
 
 
 ## Build from source
@@ -139,12 +141,8 @@ RUN apk add --no-cache git bash linux-headers build-base pcre-dev openssl-dev zl
 RUN git clone https://github.com/bugsoff/ngx_http_js_challenge_module.git &&\
     ngx_http_js_challenge_module/build.sh &&\
     mv ngx_http_js_challenge_module/ngx_http_js_challenge_module.so /etc/nginx/modules &&\
+    sed -i '1iload_module modules/ngx_http_js_challenge_module.so;' /etc/nginx/nginx.conf &&\
     rm -rf ./ngx_http_js_challenge_module
-
-RUN TMP_FILE="$(mktemp)" &&\
-    echo "load_module modules/ngx_http_js_challenge_module.so;" > "$TMP_FILE" &&\
-    cat "/etc/nginx/nginx.conf" >> "$TMP_FILE" &&\
-    mv "$TMP_FILE" "/etc/nginx/nginx.conf"
 ```
 
 ### Throughput
