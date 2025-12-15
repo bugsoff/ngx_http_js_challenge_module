@@ -71,7 +71,7 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
 
 static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r);
 
-static void buf2hex(const unsigned char *buf, size_t buflen, char *hex_string);
+static void buf2hex(const u_char *buf, size_t buflen, u_char *hex_string);
 static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md);
 static int is_private_ip(const char *ip);
 static int get_cookie(ngx_http_request_t *r, ngx_str_t *name, ngx_str_t *value);
@@ -253,7 +253,8 @@ static char *ngx_http_js_challenge_merge_loc_conf(ngx_conf_t *cf, void *parent, 
 
     // _html_path
     if (conf->html_path.data == NULL) {
-        conf->html = ngx_string(DEFAULT_HTML);
+        conf->html.data = (u_char *) DEFAULT_HTML;
+        conf->html.len  = sizeof(DEFAULT_HTML) - 1;
     } else if (conf->enabled || conf->enabled_variable_name.len > 0) {
 
         // Read file in memory
@@ -331,7 +332,7 @@ static char *ngx_http_js_challenge_set_flag_or_variable(ngx_conf_t *cf, ngx_comm
  *
  * @param out 40 bytes long string!
  */
-ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_str_t user_agent, ngx_str_t secret, char *out) {
+ngx_inline static void get_challenge_string(uint32_t bucket, ngx_str_t addr, ngx_str_t user_agent, const ngx_str_t secret, u_char *out) {
     unsigned char buf[4096];
     unsigned char md[SHA1_MD_LEN];
     const char *p = (char *) &bucket;
@@ -346,7 +347,7 @@ ngx_inline static void get_challenge_string(int32_t bucket, ngx_str_t addr, ngx_
     memcpy(buf + offset, secret.data, secret.len);          // Copy the secret
     offset += secret.len;
 
-    size_t max_len = sizeof(buf) - offset > user_agent.len      // Cut User-Agent if it too long
+    const size_t max_len = sizeof(buf) - offset > user_agent.len      // Cut User-Agent if it too long
                          ? user_agent.len
                          : sizeof(buf) - offset;
     memcpy(buf + offset, user_agent.data, max_len);         // Copy the User-Agent up to max_len
@@ -442,22 +443,22 @@ static verify_fn verify_levels[] = {
  * SHA1(response) = "011FCCD9ECB2306631FBF530B00B196D0C4AA8AE"
  *                                           ^ offset 24
  */
-static int verify_response(ngx_str_t response, char *challenge, ngx_uint_t level) {
+static int verify_response(const ngx_str_t* response, const u_char* challenge, ngx_uint_t level) {
 
     // if more than 12 additional chars => wrong
-    if (response.len <= SHA1_STR_LEN || response.len > SHA1_STR_LEN + 12) {
+    if (response->len <= SHA1_STR_LEN || response->len > SHA1_STR_LEN + 12) {
         return -1;
     }
 
     // if first part is not equal to challenge
-    if (strncmp(challenge, (char *) response.data, SHA1_STR_LEN) != 0) {
+    if (ngx_memcmp(challenge, response->data, SHA1_STR_LEN) != 0) {
         return -1;
     }
 
     unsigned char md[SHA1_MD_LEN];
-    __sha1((unsigned char *) response.data, response.len, md);
+    __sha1(response->data, response->len, md);
 
-    unsigned int nibble = (challenge[0] <= '9')
+    const unsigned int nibble = challenge[0] <= '9'
         ? challenge[0] - '0'
         : challenge[0] - 'A' + 10;
 
@@ -609,7 +610,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
 
 /* 5. Get Challenge */
 
-    const unsigned long bucket = r->start_sec - (r->start_sec % conf->bucket_duration);
+    const uint32_t bucket = r->start_sec - r->start_sec % conf->bucket_duration;
     u_char challenge[SHA1_STR_LEN];
     get_challenge_string(bucket, addr, user_agent, conf->secret, challenge);  // Updated to include User-Agent
 
@@ -631,7 +632,7 @@ static ngx_int_t ngx_http_js_challenge_handler(ngx_http_request_t *r) {
     }
 
     // wrong challenge-response in cookies
-    if (verify_response(response, challenge, conf->level) != 0) {
+    if (verify_response(&response, challenge, conf->level) != 0) {
         fire_challenge_status(CHALLENGE_SERVED, r);
         if (conf->log == 1) {
             ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0, "[js-challenge] wrong/expired c_token (%V), update c_token: %V", &response, &c_token);
@@ -804,7 +805,7 @@ static double get_c_time_cookie(ngx_http_request_t *r)
     return c_time;
 }
 
-static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md) {
+static unsigned char *__sha1(const unsigned char *d, const size_t n, unsigned char *md) {
     ngx_sha1_t c;
     ngx_sha1_init(&c);
     ngx_sha1_update(&c, d, n);
@@ -812,11 +813,11 @@ static unsigned char *__sha1(const unsigned char *d, size_t n, unsigned char *md
     return md;
 }
 
-ngx_inline static void buf2hex(const unsigned char *buf, size_t buflen, char *hex_string) {
+ngx_inline static void buf2hex(const u_char *buf, size_t buflen, u_char *hex_string) {
     static const char hexdig[] = "0123456789ABCDEF";
     const unsigned char *p;
     size_t i;
-    char *s = hex_string;
+    u_char *s = hex_string;
     for (i = 0, p = buf; i < buflen; i++, p++) {
         *s++ = hexdig[(*p >> 4) & 0x0f];
         *s++ = hexdig[*p & 0x0f];
