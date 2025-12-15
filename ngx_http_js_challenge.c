@@ -389,7 +389,7 @@ static int serve_challenge(ngx_http_request_t *r, u_char* challenge, const ngx_h
 
     ngx_http_send_header(r);
     ngx_http_output_filter(r, &out);
-    ngx_http_finalize_request(r, NGX_HTTP_SERVICE_UNAVAILABLE);
+    ngx_http_finalize_request(r, 0); // response already sent, rc is not needed!
 
     return NGX_DONE;
 }
